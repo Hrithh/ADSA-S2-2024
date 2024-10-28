@@ -1,173 +1,146 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <queue>
+#include <tuple>
 #include <algorithm>
-#include <numeric>
+#include <climits>      
+#include <functional>   
 
 using namespace std;
 
-// Helper function to convert cost character to integer
-int charToCost(char c) {
-    if (c >= 'A' && c <= 'Z') return c - 'A';      // 0 to 25
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26; // 26 to 51
-    return -1; // Error case
+// Convert letter to cost
+int letter_to_cost(char letter) {
+    if (letter >= 'A' && letter <= 'Z') {
+        return letter - 'A';
+    } else if (letter >= 'a' && letter <= 'z') {
+        return letter - 'a' + 26;
+    }
+    return INT_MAX;  
 }
 
-// Function to parse the input
-void parseInput(string input, vector<vector<int>>& country, vector<vector<int>>& build, vector<vector<int>>& destroy) {
-    size_t pos = 0;
-    string token;
-    vector<string> tokens;
-
-    // Split input by spaces
-    while ((pos = input.find(' ')) != string::npos) {
-        token = input.substr(0, pos);
-        tokens.push_back(token);
-        input.erase(0, pos + 1);
-    }
-    tokens.push_back(input); // last token
-
-    // Parse country, build, and destroy arrays
-    for (int i = 0; i < 3; ++i) {
-        size_t rowPos = 0;
-        vector<vector<int>> matrix;
-        while ((rowPos = tokens[i].find(',')) != string::npos) {
-            string row = tokens[i].substr(0, rowPos);
-            vector<int> rowData;
-            for (char c : row) {
-                rowData.push_back(c - '0'); // Convert '0'/'1' to integer for country
+// Parse input strings into 2D matrices and convert to integer costs 
+void parse_input(const string &input, vector<vector<int>> &country, vector<vector<int>> &build, vector<vector<int>> &destroy) {
+    auto parse_matrix = [](const string &matrix_str, int n, bool convert = false) {
+        vector<vector<int>> matrix(n, vector<int>(n, 0));
+        int idx = 0;
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j < n; ++j) {
+                matrix[i][j] = convert ? letter_to_cost(matrix_str[idx++]) : matrix_str[idx++] - '0';
             }
-            matrix.push_back(rowData);
-            tokens[i].erase(0, rowPos + 1);
+            idx++; 
         }
-        // Last row
-        if (!tokens[i].empty()) {
-            vector<int> rowData;
-            for (char c : tokens[i]) {
-                rowData.push_back(c - '0'); // Convert '0'/'1' to integer for country
-            }
-            matrix.push_back(rowData);
-        }
+        return matrix;
+    };
 
-        // Assign to the appropriate matrix
-        if (i == 0) {
-            country = matrix;
-        } else if (i == 1) {
-            for (const auto& row : matrix) {
-                vector<int> costRow;
-                for (char c : row) {
-                    costRow.push_back(charToCost(c)); // Convert costs from characters
-                }
-                build.push_back(costRow);
-            }
-        } else {
-            for (const auto& row : matrix) {
-                vector<int> costRow;
-                for (char c : row) {
-                    costRow.push_back(charToCost(c)); // Convert costs from characters
-                }
-                destroy.push_back(costRow);
-            }
-        }
-    }
+    int first_space = input.find(' ');
+    int second_space = input.find(' ', first_space + 1);
+
+    int n = count(input.begin(), input.end(), ',') / 3 + 1;
+    country = parse_matrix(input.substr(0, first_space), n, false);
+    build = parse_matrix(input.substr(first_space + 1, second_space - first_space - 1), n, true);
+    destroy = parse_matrix(input.substr(second_space + 1), n, true);
 }
 
-// Structure to hold edges
-struct Edge {
-    int u, v;
-    int cost; // Cost of the edge (for building or destroying)
-};
-
-// Union-Find (Disjoint Set Union) for Kruskal's algorithm
-class UnionFind {
-public:
-    UnionFind(int n) : parent(n), rank(n, 0) {
-        iota(parent.begin(), parent.end(), 0); // Initialize parent
-    }
-
-    int find(int u) {
-        if (u != parent[u]) {
-            parent[u] = find(parent[u]); // Path compression
-        }
-        return parent[u];
-    }
-
-    void unionSets(int u, int v) {
-        int rootU = find(u);
-        int rootV = find(v);
-        if (rootU != rootV) {
-            if (rank[rootU] < rank[rootV]) {
-                parent[rootU] = rootV;
-            } else if (rank[rootU] > rank[rootV]) {
-                parent[rootV] = rootU;
-            } else {
-                parent[rootV] = rootU;
-                rank[rootU]++;
-            }
-        }
-    }
-
-private:
-    vector<int> parent;
-    vector<int> rank;
-};
-
-// Function to implement Kruskal's algorithm and compute the minimal cost
-int kruskalAlgorithm(const vector<vector<int>>& country, const vector<vector<int>>& build, const vector<vector<int>>& destroy) {
+// Find connected components in the initial city 
+void find_components(const vector<vector<int>> &country, vector<vector<int>> &components, vector<int> &component_id) {
     int n = country.size();
-    vector<Edge> edges;
+    vector<bool> visited(n, false);
+    int component_count = 0;
 
-    // Add existing roads (with destroy costs)
-    for (int u = 0; u < n; ++u) {
-        for (int v = u + 1; v < n; ++v) {
-            if (country[u][v] == 1) { // Existing road
-                edges.push_back({u, v, charToCost(destroy[u][v])}); // Cost to destroy
+    function<void(int)> dfs = [&](int node) {
+        visited[node] = true;
+        components[component_count].push_back(node);
+        component_id[node] = component_count;
+        for (int neighbor = 0; neighbor < n; ++neighbor) {
+            if (country[node][neighbor] == 1 && !visited[neighbor]) {
+                dfs(neighbor);
+            }
+        }
+    };
+
+    for (int i = 0; i < n; ++i) {
+        if (!visited[i]) {
+            components.emplace_back();
+            dfs(i);
+            component_count++;
+        }
+    }
+}
+
+// Union-Find structure for Kruskal's MST
+struct UnionFind {
+    vector<int> parent, rank;
+
+    UnionFind(int n) : parent(n), rank(n, 0) {
+        for (int i = 0; i < n; ++i) parent[i] = i;
+    }
+
+    int find(int x) {
+        if (parent[x] != x) parent[x] = find(parent[x]);
+        return parent[x];
+    }
+
+    bool union_sets(int x, int y) {
+        int rootX = find(x), rootY = find(y);
+        if (rootX != rootY) {
+            if (rank[rootX] > rank[rootY]) parent[rootY] = rootX;
+            else if (rank[rootX] < rank[rootY]) parent[rootX] = rootY;
+            else {
+                parent[rootY] = rootX;
+                rank[rootX]++;
+            }
+            return true;
+        }
+        return false;
+    }
+};
+
+// Calculate minimum cost to reconstruct the road network
+int calculate_min_cost(const vector<vector<int>> &country, const vector<vector<int>> &build, const vector<vector<int>> &destroy) {
+    int n = country.size();
+    vector<tuple<int, int, int, bool>> edges;
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            if (country[i][j] == 1) {
+                edges.emplace_back(destroy[i][j], i, j, false); 
             } else {
-                edges.push_back({u, v, charToCost(build[u][v])}); // Cost to build
+                edges.emplace_back(build[i][j], i, j, true);  
             }
         }
     }
 
-    // Sort edges by cost
-    sort(edges.begin(), edges.end(), [](const Edge& a, const Edge& b) {
-        return a.cost < b.cost;
-    });
-
+    sort(edges.begin(), edges.end());
+  
     UnionFind uf(n);
-    int totalCost = 0;
+    int total_cost = 0;
 
-    // Process edges
-    for (const auto& edge : edges) {
-        int rootU = uf.find(edge.u);
-        int rootV = uf.find(edge.v);
-        if (rootU != rootV) {
-            totalCost += edge.cost; // Add cost for either building or destroying
-            uf.unionSets(edge.u, edge.v); // Union the sets
+    for (const auto &edge : edges) {
+        int cost, u, v;
+        bool is_build;
+        tie(cost, u, v, is_build) = edge;
+        
+        if (uf.union_sets(u, v)) {
+            total_cost += cost;
         }
     }
 
-    return totalCost;
+    return total_cost;
 }
 
 int main() {
-    string input;
-    getline(cin, input); // Read input line
-
-    // Parse input
+    string input_string = "011,101,110 ABD,BAC,DCA ABD,BAC,DCA"; 
     vector<vector<int>> country, build, destroy;
-    parseInput(input, country, build, destroy);
 
-    // Handle edge cases: no cities or one city
-    if (country.empty() || country.size() == 1) {
-        cout << 0 << endl;
-        return 0;
-    }
+    parse_input(input_string, country, build, destroy);
 
-    // Compute minimal cost
-    int minCost = kruskalAlgorithm(country, build, destroy);
+    vector<vector<int>> components;
+    vector<int> component_id(country.size(), -1);
+    find_components(country, components, component_id);
 
-    // Output result
-    cout << minCost << endl;
+    int min_cost = calculate_min_cost(country, build, destroy);
+    cout << min_cost << endl;
 
     return 0;
 }
